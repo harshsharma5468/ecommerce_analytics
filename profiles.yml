@@ -1,0 +1,46 @@
+# dbt Profiles Configuration
+# =========================
+# This file contains database connection profiles for dbt.
+# Copy this file to your dbt profiles directory:
+#   - Windows: C:\Users\YourUsername\.dbt\profiles.yml
+#   - macOS/Linux: ~/.dbt/profiles.yml
+#
+# Or run dbt with: dbt run --profiles-dir .
+
+ecommerce_analytics:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: localhost
+      port: 5432
+      user: analytics_user
+      password: analytics_pass
+      dbname: ecommerce_analytics
+      schema: public
+      threads: 4
+      connect_timeout: 10
+      priority: interactive
+      
+    prod:
+      type: postgres
+      host: "{{ env_var('DB_HOST', 'localhost') }}"
+      port: "{{ env_var('DB_PORT', '5432') }}"
+      user: "{{ env_var('DB_USER', 'analytics_user') }}"
+      password: "{{ env_var('DB_PASSWORD', 'analytics_pass') }}"
+      dbname: "{{ env_var('DB_NAME', 'ecommerce_analytics') }}"
+      schema: analytics
+      threads: 8
+      connect_timeout: 10
+      priority: interactive
+
+# Alternative: SQLite profile (for local development without PostgreSQL)
+# Note: SQLite requires the dbt-sqlite package
+# ecommerce_analytics_sqlite:
+#   target: dev
+#   outputs:
+#     dev:
+#       type: sqlite
+#       threads: 1
+#       database: ./data/ecommerce_analytics.db
+#       schema: main

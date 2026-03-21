@@ -1,0 +1,253 @@
+name: E-Commerce Analytics CI/CD
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Run daily at 2 AM UTC
+    - cron: '0 2 * * *'
+
+jobs:
+  test:
+    name: Test (${{ matrix.python-version }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+        os: [ubuntu-latest, windows-latest]
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+        cache: 'pip'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest pytest-cov pytest-xdist
+    
+    - name: Lint with flake8
+      run: |
+        pip install flake8
+        # Stop the build if there are Python syntax errors or undefined names
+        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        # Exit-zero treats all errors as warnings
+        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+      continue-on-error: true
+    
+    - name: Run tests with pytest
+      run: |
+        pytest tests/ -v --cov=src --cov-report=xml --cov-report=html -n auto
+      env:
+        PYTHONPATH: ${{ github.workspace }}
+    
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v4
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-${{ matrix.python-version }}
+      continue-on-error: true
+    
+    - name: Upload test results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-results-${{ matrix.python-version }}-${{ matrix.os }}
+        path: |
+          htmlcov/
+          coverage.xml
+
+  data-validation:
+    name: Data Validation
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+        cache: 'pip'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install great-expectations
+    
+    - name: Run data pipeline
+      run: python run_pipeline.py
+    
+    - name: Validate data with Great Expectations
+      run: |
+        python -c "
+        import pandas as pd
+        from pathlib import Path
+        
+        # Simple validation checks
+        customers = pd.read_parquet('data/raw/customers.parquet')
+        transactions = pd.read_parquet('data/raw/transactions.parquet')
+        rfm = pd.read_parquet('data/processed/rfm_segmented.parquet')
+        
+        # Customer validations
+        assert customers['customer_id'].is_unique, 'Customer IDs not unique'
+        assert customers['email'].notnull().all(), 'Null emails found'
+        assert len(customers) > 0, 'No customers generated'
+        
+        # Transaction validations
+        assert transactions['total_amount'].gt(0).all(), 'Negative transaction amounts'
+        assert transactions['transaction_id'].is_unique, 'Transaction IDs not unique'
+        assert len(transactions) > 0, 'No transactions generated'
+        
+        # RFM validations
+        assert rfm['recency'].ge(0).all(), 'Negative recency values'
+        assert rfm['frequency'].ge(0).all(), 'Negative frequency values'
+        assert rfm['monetary'].ge(0).all(), 'Negative monetary values'
+        assert len(rfm) > 0, 'No RFM data generated'
+        
+        print('All data validations passed!')
+        "
+    
+    - name: Upload data artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: generated-data
+        path: |
+          data/raw/*.parquet
+          data/processed/*.parquet
+
+  build-dashboard:
+    name: Build Dashboard
+    runs-on: ubuntu-latest
+    needs: [test, data-validation]
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+        cache: 'pip'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Check dashboard syntax
+      run: |
+        python -m py_compile src/dashboard/app.py
+    
+    - name: Test dashboard imports
+      run: |
+        python -c "
+        import sys
+        sys.path.insert(0, '.')
+        
+        # Test imports
+        from src.dashboard.app import load_rfm, load_profiles
+        print('Dashboard imports successful!')
+        "
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+    
+    - name: Install safety
+      run: pip install safety
+    
+    - name: Check dependencies for vulnerabilities
+      run: safety check -r requirements.txt
+      continue-on-error: true
+    
+    - name: Run bandit security scan
+      run: |
+        pip install bandit
+        bandit -r src/ -f json -o bandit-report.json
+      continue-on-error: true
+    
+    - name: Upload security report
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: security-report
+        path: bandit-report.json
+
+  deploy-docs:
+    name: Deploy Documentation
+    runs-on: ubuntu-latest
+    needs: [test]
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+    
+    - name: Generate documentation
+      run: |
+        pip install pydoc-markdown
+        # Generate API documentation
+        echo "# API Documentation" > API_DOCS.md
+        echo "" >> API_DOCS.md
+        python -c "
+        import inspect
+        import sys
+        sys.path.insert(0, '.')
+        
+        modules = [
+            'src.predictive.churn_model',
+            'src.predictive.survival_analysis',
+            'src.predictive.clv_model',
+            'src.causal.inference',
+            'src.ab_testing.advanced_ab_testing',
+            'src.reports.decision_engine'
+        ]
+        
+        for module_name in modules:
+            try:
+                module = __import__(module_name, fromlist=[''])
+                print(f'## {module_name}', file=open('API_DOCS.md', 'a'))
+                print('', file=open('API_DOCS.md', 'a'))
+                
+                for name, obj in inspect.getmembers(module):
+                    if inspect.isclass(obj) and obj.__module__ == module_name:
+                        print(f'### {name}', file=open('API_DOCS.md', 'a'))
+                        print(f'\`\`\`python', file=open('API_DOCS.md', 'a'))
+                        if obj.__doc__:
+                            print(obj.__doc__[:500], file=open('API_DOCS.md', 'a'))
+                        print(f'\`\`\`', file=open('API_DOCS.md', 'a'))
+                        print('', file=open('API_DOCS.md', 'a'))
+            except Exception as e:
+                print(f'Error processing {module_name}: {e}')
+        "
+    
+    - name: Upload documentation
+      uses: actions/upload-artifact@v4
+      with:
+        name: documentation
+        path: |
+          API_DOCS.md
+          README.md

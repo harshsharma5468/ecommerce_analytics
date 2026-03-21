@@ -1,0 +1,307 @@
+# NexaCommerce Analytics Platform - Docker Compose
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Services
+# ──────────────────────────────────────────────────────────────────────────────
+services:
+  # ────────────────────────────────────────────────────────────────────────────
+  # Main Application - Streamlit Dashboard
+  # ────────────────────────────────────────────────────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: nexacommerce-app
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
+    volumes:
+      # Persist data
+      - app_data:/app/data
+      - app_models:/app/models
+      - app_logs:/app/logs
+      # Mount local files for development
+      - ./config:/app/config:ro
+      - ./src:/app/src:ro
+      - ./run_pipeline.py:/app/run_pipeline.py:ro
+    environment:
+      - PYTHONPATH=/app
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=ecommerce_analytics
+      - DB_USER=analytics_user
+      - DB_PASSWORD=analytics_pass
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - STREAMLIT_SERVER_PORT=8501
+      - STREAMLIT_SERVER_ADDRESS=0.0.0.0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - nexacommerce-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # PostgreSQL Database
+  # ────────────────────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:15-alpine
+    container_name: nexacommerce-postgres
+    restart: unless-stopped
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./sql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    environment:
+      - POSTGRES_DB=ecommerce_analytics
+      - POSTGRES_USER=analytics_user
+      - POSTGRES_PASSWORD=analytics_pass
+      - PGDATA=/var/lib/postgresql/data/pgdata
+    networks:
+      - nexacommerce-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U analytics_user -d ecommerce_analytics"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 2G
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # Redis Cache (for streaming & caching)
+  # ────────────────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: nexacommerce-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    networks:
+      - nexacommerce-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # Streaming Service (Real-time transaction simulation)
+  # ────────────────────────────────────────────────────────────────────────────
+  streaming:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: nexacommerce-streaming
+    restart: unless-stopped
+    volumes:
+      - app_data:/app/data
+      - ./config:/app/config:ro
+      - ./src:/app/src:ro
+    environment:
+      - PYTHONPATH=/app
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - STREAMING_ENABLED=true
+      - STREAMING_RATE=10.0
+    depends_on:
+      - redis
+      - app
+    command: >
+      python -c "
+      from src.streaming import start_streaming;
+      import time;
+      start_streaming();
+      while True: time.sleep(60)
+      "
+    networks:
+      - nexacommerce-network
+    profiles:
+      - streaming
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # A/B Testing Engine
+  # ────────────────────────────────────────────────────────────────────────────
+  ab-engine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: nexacommerce-ab-engine
+    restart: "no"
+    volumes:
+      - app_data:/app/data
+      - ./config:/app/config:ro
+      - ./src:/app/src:ro
+    environment:
+      - PYTHONPATH=/app
+    command: python src/ab_testing/ab_engine.py
+    networks:
+      - nexacommerce-network
+    profiles:
+      - ab-test
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # dbt Runner (for data transformations)
+  # ────────────────────────────────────────────────────────────────────────────
+  dbt:
+    image: dbtlabs/postgres:1.6
+    container_name: nexacommerce-dbt
+    restart: "no"
+    volumes:
+      - ./dbt:/usr/app/dbt
+      - ./data:/usr/app/data
+    working_dir: /usr/app/dbt
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=ecommerce_analytics
+      - POSTGRES_USER=analytics_user
+      - POSTGRES_PASSWORD=analytics_pass
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: dbt run
+    networks:
+      - nexacommerce-network
+    profiles:
+      - dbt
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # Test Runner (for CI/CD and development)
+  # ────────────────────────────────────────────────────────────────────────────
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    container_name: nexacommerce-test
+    volumes:
+      - .:/app
+      - app_test_cache:/app/.pytest_cache
+    environment:
+      - PYTHONPATH=/app
+      - PYTEST_ADDOPTS=-v --cov=src --cov-report=xml
+    depends_on:
+      - postgres
+    command: pytest tests/ -v --cov=src --cov-report=term-missing
+    networks:
+      - nexacommerce-network
+    profiles:
+      - test
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # Pipeline Runner (one-time data generation)
+  # ────────────────────────────────────────────────────────────────────────────
+  pipeline:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    container_name: nexacommerce-pipeline
+    volumes:
+      - app_data:/app/data
+      - ./config:/app/config:ro
+      - ./src:/app/src:ro
+    environment:
+      - PYTHONPATH=/app
+      - DB_HOST=postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: python run_pipeline.py
+    networks:
+      - nexacommerce-network
+    profiles:
+      - pipeline
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Volumes
+# ──────────────────────────────────────────────────────────────────────────────
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  app_data:
+    driver: local
+  app_models:
+    driver: local
+  app_logs:
+    driver: local
+  app_test_cache:
+    driver: local
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Networks
+# ──────────────────────────────────────────────────────────────────────────────
+networks:
+  nexacommerce-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Usage Examples
+# ──────────────────────────────────────────────────────────────────────────────
+# 
+# Start main services (app + postgres + redis):
+#   docker-compose up -d
+#
+# Start with streaming:
+#   docker-compose --profile streaming up -d
+#
+# Run A/B tests:
+#   docker-compose --profile ab-test up --abort-on-container-exit
+#
+# Run tests:
+#   docker-compose --profile test up --abort-on-container-exit
+#
+# Run pipeline:
+#   docker-compose --profile pipeline up --abort-on-container-exit
+#
+# Run dbt models:
+#   docker-compose --profile dbt up --abort-on-container-exit
+#
+# View logs:
+#   docker-compose logs -f app
+#
+# Stop all services:
+#   docker-compose down
+#
+# Stop and remove volumes:
+#   docker-compose down -v

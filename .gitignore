@@ -1,0 +1,107 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+*.sublime-workspace
+
+# Testing
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.hypothesis/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Docker
+.dockerignore
+
+# Environment variables (NEVER commit secrets!)
+.env
+.env.local
+.env.*.local
+
+# Data directories (large files)
+data/raw/
+data/processed/
+logs/
+models/
+reports/
+htmlcov/
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+*.parquet
+
+# dbt
+target/
+dbt_packages/
+dbt-*.zip
+
+# IDE
+*.sublime-workspace
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Streaming/Kafka
+streaming/
+
+# Feature store cache
+feature_store/
+
+# Generated files
+*.pyc
+*.pyo
+*.jar
+*.war
+
+# Misc
+done/
+echo/
+.coverage
+.user.yml

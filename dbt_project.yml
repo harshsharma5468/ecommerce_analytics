@@ -1,0 +1,46 @@
+name: 'ecommerce_analytics'
+version: '1.0.0'
+config-version: 2
+
+profile: 'ecommerce_analytics'
+
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+
+target-path: "target"
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+# Model configurations
+models:
+  ecommerce_analytics:
+    +materialized: view
+    staging:
+      +materialized: view
+      +tags: ['staging']
+    intermediate:
+      +materialized: view
+      +tags: ['intermediate']
+    marts:
+      +materialized: table
+      +tags: ['marts']
+
+# Seed configurations
+seeds:
+  ecommerce_analytics:
+    +quote_columns: false
+
+# Test configurations (updated from 'tests' to 'data_tests')
+data_tests:
+  ecommerce_analytics:
+    +severity: warn
+
+# Snapshot configurations
+snapshots:
+  ecommerce_analytics:
+    +target_schema: snapshots
