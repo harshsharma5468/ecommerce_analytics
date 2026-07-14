@@ -1,17 +1,20 @@
-# Metric contract
+# Metric and decision contract
 
 | Metric | Definition | Grain | Guardrail |
 |---|---|---|---|
-| Net revenue | Revenue less refunds | Day | Deduplicate by order ID and exclude cancelled orders. |
+| Net revenue | Revenue less refunds | Day | Deduplicate by order ID; invalid dates are excluded. |
 | Orders | Unique order IDs | Day | Never use raw row count. |
-| AOV | Net revenue divided by orders | Day | Null when orders are zero. |
+| AOV | Net revenue divided by orders | Day | Null when no orders exist. |
 | Repeat purchase rate | Repeat customers divided by active customers | Month | Requires stable customer IDs. |
-| Retention | Customers returning in month N divided by original cohort | Cohort-month | Cohorts are based on first observed order. |
+| Retention | Returning cohort customers divided by cohort size | Cohort-month | Cohort is first observed valid order. |
 
-## Decision rules
+## Central policy
 
-- A revenue anomaly is flagged at absolute robust z-score of at least 3.5.
-- Inventory is critical below seven days of cover.
-- Reorder is recommended below the configured target days of cover, default 21.
+Decision thresholds are defined in the DecisionPolicy dataclass rather than being spread through business logic.
 
-These rules are transparent defaults, not universal business thresholds. They should be calibrated to the company operating model.
+- Revenue anomaly: robust z-score at or above 3.5 by default.
+- Critical inventory: under 7 days of cover.
+- Reorder inventory: under 21 days of cover.
+- Zero average demand: labeled no_demand, never silently healthy.
+
+A deployment can pass a different DecisionPolicy into anomaly, inventory, or action functions to calibrate these defaults without rewriting calculations.
