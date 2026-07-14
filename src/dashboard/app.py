@@ -27,7 +27,7 @@ import warnings
 warnings.filterwarnings("ignore")
 
 from config.settings import *
-from src.decision_intelligence import daily_kpis, retention_matrix, detect_revenue_anomalies, action_queue
+from src.decision_intelligence import daily_kpis, retention_matrix, detect_revenue_anomalies, action_queue, metric_contract
 
 # Verify paths are set correctly
 if not PROCESSED_DIR.exists():
@@ -857,11 +857,15 @@ with tabs[5]:
             cohort = retention_matrix(normalized)
             st.markdown("#### Cohort retention")
             st.dataframe((cohort * 100).round(1), use_container_width=True)
-            actions = action_queue(kpis)
+            inventory_path = RAW_DIR / "inventory.parquet"
+            inventory_data = pd.read_parquet(inventory_path) if inventory_path.exists() else None
+            actions = action_queue(kpis, inventory_data)
             st.markdown("#### Recommended actions")
             if actions.empty:
                 st.success("No revenue anomalies require immediate investigation.")
             else:
                 st.dataframe(actions, use_container_width=True, hide_index=True)
+            with st.expander("Metric contract"):
+                st.dataframe(metric_contract(), use_container_width=True, hide_index=True)
         except ValueError as exc:
             st.warning("Decision view needs order ID, customer ID, date and revenue columns: " + str(exc))
