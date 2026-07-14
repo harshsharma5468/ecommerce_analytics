@@ -27,6 +27,7 @@ import warnings
 warnings.filterwarnings("ignore")
 
 from config.settings import *
+from src.decision_intelligence import daily_kpis, retention_matrix, detect_revenue_anomalies, action_queue
 
 # Verify paths are set correctly
 if not PROCESSED_DIR.exists():
@@ -204,6 +205,7 @@ tabs = st.tabs([
     "🧪 A/B Experiments",
     "💰 Revenue & CLV",
     "📋 Business Recommendations",
+    "🎯 Decision Intelligence",
 ])
 
 
@@ -824,3 +826,42 @@ st.markdown("""
     Built with Streamlit, Plotly, scikit-learn, SciPy, SQLAlchemy
 </div>
 """, unsafe_allow_html=True)
+
+
+# Decision intelligence operating view
+with tabs[5]:
+    st.markdown('<div class="section-header">Decision Intelligence</div>', unsafe_allow_html=True)
+    transaction_data = load_transactions()
+    if transaction_data.empty:
+        st.info("Run the pipeline to generate transaction data and unlock the operating view.")
+    else:
+        normalized = transaction_data.copy()
+        if "transaction_id" in normalized and "order_id" not in normalized:
+            normalized = normalized.rename(columns={"transaction_id": "order_id"})
+        if "transaction_date" in normalized and "order_date" not in normalized:
+            normalized = normalized.rename(columns={"transaction_date": "order_date"})
+        try:
+            kpis = daily_kpis(normalized)
+            anomalies = detect_revenue_anomalies(kpis)
+            latest_kpi = kpis.iloc[-1]
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Latest net revenue", "$%.0f" % latest_kpi.net_revenue)
+            c2.metric("Latest orders", "%.0f" % latest_kpi.orders)
+            c3.metric("Latest AOV", "$%.2f" % latest_kpi.aov)
+            c4.metric("Revenue anomalies", int(anomalies.is_anomaly.sum()))
+            trend = px.line(kpis, x="date", y="net_revenue", title="Net revenue with explainable anomaly detection", template=PLOTLY_TEMPLATE)
+            flagged = anomalies[anomalies["is_anomaly"]]
+            if not flagged.empty:
+                trend.add_scatter(x=flagged["date"], y=flagged["net_revenue"], mode="markers", name="Anomaly", marker=dict(color="#f87171", size=11))
+            st.plotly_chart(trend, use_container_width=True)
+            cohort = retention_matrix(normalized)
+            st.markdown("#### Cohort retention")
+            st.dataframe((cohort * 100).round(1), use_container_width=True)
+            actions = action_queue(kpis)
+            st.markdown("#### Recommended actions")
+            if actions.empty:
+                st.success("No revenue anomalies require immediate investigation.")
+            else:
+                st.dataframe(actions, use_container_width=True, hide_index=True)
+        except ValueError as exc:
+            st.warning("Decision view needs order ID, customer ID, date and revenue columns: " + str(exc))
